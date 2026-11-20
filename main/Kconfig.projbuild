@@ -454,6 +454,9 @@ choice BOARD_TYPE
     config BOARD_TYPE_RYMCU_BIGSMART
         bool "RYMCU BigSmart"
         depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_SALMIS_S3
+        bool "Salmis S3 (Spotpear ESP32-S3 1.28 Box + microSD)"
+        depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_SEEED_STUDIO_SENSECAP_WATCHER
         bool "Seeed Studio SenseCAP Watcher"
         depends on IDF_TARGET_ESP32S3

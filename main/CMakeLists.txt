@@ -799,6 +799,11 @@ elseif(CONFIG_BOARD_TYPE_XINGZHI_ABS_2_0)
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
     set(BUILTIN_ICON_FONT font_material_symbols_20_4)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_128)
+elseif(CONFIG_BOARD_TYPE_SALMIS_S3)
+    set(BOARD_DIR "salmis-s3")
+    set(BUILTIN_TEXT_FONT font_noto_sans_basic_16_4)
+    set(BUILTIN_ICON_FONT font_material_symbols_16_4)
+    set(DEFAULT_EMOJI_COLLECTION main/boards/salmis-s3/emoji)
 elseif(CONFIG_BOARD_TYPE_SEEED_STUDIO_SENSECAP_WATCHER)
     set(BOARD_DIR "sensecap-watcher")
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_30_4)
@@ -1195,6 +1200,13 @@ if(CONFIG_BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD)
         sdmmc
     )
 endif()
+if(CONFIG_BOARD_TYPE_SALMIS_S3)
+    list(APPEND MAIN_PRIV_REQUIRES_EXTRA
+        esp_driver_sdspi
+        esp_driver_sdmmc
+        sdmmc
+    )
+endif()
 # The Otto camera board uses the USB Serial/JTAG host connection to detect
 # charging from a USB port. The board is ESP32-S3 only, so require the driver
 # on that target and keep other target builds unchanged.
@@ -1433,6 +1445,8 @@ function(build_default_assets_bin)
             "${NOTO_FONTS_PATH}/png/${DEFAULT_EMOJI_COLLECTION}/*"
         )
         list(APPEND DEFAULT_ASSETS_DEPENDENCIES ${DEFAULT_EMOJI_FILES})
+        file(GLOB BOARD_EMOJI_FILES CONFIGURE_DEPENDS "${PROJECT_DIR}/${DEFAULT_EMOJI_COLLECTION}/*")
+        list(APPEND DEFAULT_ASSETS_DEPENDENCIES ${BOARD_EMOJI_FILES})
     endif()
 
     # Add default assets extra files if defined
