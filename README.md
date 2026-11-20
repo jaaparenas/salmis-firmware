@@ -93,6 +93,31 @@ The card is mounted at `/sdcard`. If it is missing the boot continues and the re
   eyes back.
 - BOOT long press plays the next track, short press stops it.
 
+### Calendar
+
+Ask the robot for the calendar and it shows the month in place of its eyes:
+
+> — *muestra el calendario*
+> — *Aquí tienes el calendario de diciembre.*
+
+The month is drawn with a 5×7 bitmap font into an RGB565 buffer and shown through the same
+layer as the photo slideshow, so **it never touches LVGL** and cannot be affected by the theme
+fonts being replaced at runtime. The day of the month is framed, the weekend is dimmer, and
+the whole layout is checked to stay inside the circle of the round screen.
+
+| Tool | Purpose |
+|---|---|
+| `self.screen.show_calendar` | Draw the calendar of the current month |
+| `self.screen.hide_calendar` | Take it off the screen and bring the eyes back |
+
+The calendar goes away with a touch, with the BOOT button, with the wake word, when the
+assistant starts a new turn, or on its own after 90 s, so it can never stay on the screen
+forever.
+
+The renderer lives in `main/display/calendar_renderer.{h,cc}` and is generic: any board with an
+RGB565 display can use it. `scripts/tests/test_calendar_renderer.py` compiles it on the host
+and checks that every drawn pixel stays inside the circle of the round screen.
+
 ---
 
 ## MicroSD layout
@@ -174,6 +199,10 @@ The assistant side needs one extra step that only the account owner can do: in t
 > the library, say so in one short sentence and ask the user whether they want to hear a few of
 > the titles you do have or to have a random one played. Never read out more than five titles,
 > and never read the whole library.
+>
+> When the user asks for the calendar, the date, what day it is or what month it is, use the
+> `self.screen.show_calendar` tool to show the calendar on the device's screen. Use
+> `self.screen.hide_calendar` to take it away.
 
 The tool description already says the same thing, but the prompt is what the agent reads first.
 
@@ -231,6 +260,8 @@ Everything is on the `salmis` branch. `main` tracks upstream and is never edited
 | `main/media/mp3_file_decoder.{h,cc}` | MP3 → mono → 24 kHz → Opus, streamed in 4 KB chunks |
 | `main/media/media_mcp_tools.{h,cc}` | The `self.media.*` tools |
 | `main/media/media_policy.{h,cc}` | Refuses cloud audio when a local library exists |
+| `main/display/calendar_renderer.{h,cc}` | Draws a month as an RGB565 bitmap with a 5×7 font |
+| `main/boards/salmis-s3/calendar_view.{h,cc}` | Calendar on screen, the MCP tools, auto hide |
 | `main/boards/salmis-s3/` | New board: microSD, expressions, slideshow, emoji generator |
 | `main/application.{h,cc}` | `PlayLocalAudio` / `StopLocalAudio`, notification refusal |
 | `main/notify/notify_player.{h,cc}` | `StartLocalFile`, reusing the notify pipeline |

@@ -12,6 +12,7 @@
 #include <ctime>
 
 #include "application.h"
+#include "calendar_view.h"
 #include "custom_display.h"
 #include "device_state.h"
 #include "display/lvgl_display/jpg/jpeg_to_image.h"
@@ -146,6 +147,11 @@ void SlideShow::Task() {
         idle_seconds_++;
         if (!active_) {
             if (idle_seconds_ < kIdleSecondsBeforeStart) {
+                continue;
+            }
+            if (CalendarView::GetInstance().IsVisible()) {
+                // The calendar is on the screen, it has priority.
+                idle_seconds_ = 0;
                 continue;
             }
             if (!scanned_) {

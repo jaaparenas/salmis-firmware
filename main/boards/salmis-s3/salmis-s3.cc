@@ -3,6 +3,7 @@
 #include "display/lcd_display.h"
 #include "application.h"
 #include "button.h"
+#include "calendar_view.h"
 #include "config.h"
 #include "led/single_led.h"
 #include "custom_display.h"
@@ -239,6 +240,10 @@ private:
                 }
                 ESP_LOGI(TAG, "Touch released, state=%d", (int)app.GetDeviceState());
                 SlideShow::GetInstance().NotifyInteraction();
+                if (CalendarView::GetInstance().IsVisible()) {
+                    CalendarView::GetInstance().Hide();
+                    return;
+                }
                 if (app.IsLocalAudioPlaying()) {
                     app.StopLocalAudio();
                     return;
@@ -440,6 +445,10 @@ private:
             }
             ESP_LOGI(TAG, "BOOT click, state=%d", (int)app.GetDeviceState());
             SlideShow::GetInstance().NotifyInteraction();
+            if (CalendarView::GetInstance().IsVisible()) {
+                CalendarView::GetInstance().Hide();
+                return;
+            }
             if (app.IsLocalAudioPlaying()) {
                 app.StopLocalAudio();
                 return;
@@ -488,6 +497,8 @@ public:
         InitializeSdCard();
         StartMediaScan();
         RegisterMediaMcpTools();
+        CalendarView::GetInstance().Start(static_cast<CustomLcdDisplay*>(display_));
+        CalendarView::GetInstance().RegisterTools();
         SlideShow::GetInstance().Start(static_cast<CustomLcdDisplay*>(display_));
         if (GetBacklight()) {
             GetBacklight()->RestoreBrightness();
