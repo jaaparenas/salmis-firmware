@@ -37,7 +37,9 @@ public:
     bool Get(int id, MediaTrack& out);
     SearchResult Search(const std::string& query);
 
-    // Lowercase ASCII, accents removed, anything else collapsed into single spaces.
+    // Folds the text for comparison: Latin letters with diacritics become
+    // their ASCII base, letters of other scripts are kept and case folded,
+    // and punctuation becomes a single space.
     static std::string Normalize(const std::string& text);
 
 private:

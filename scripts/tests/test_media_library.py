@@ -12,6 +12,8 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 LIBRARY = ROOT / "main/media/media_library.cc"
 LIBRARY_HEADER = ROOT / "main/media/media_library.h"
+MEDIA_TEXT = ROOT / "main/media/media_text.cc"
+UNICODE_TABLES = ROOT / "main/media/unicode_tables.cc"
 
 # The library root is a constant in the source. It is replaced so the test
 # can build a library of its own.
@@ -70,6 +72,18 @@ void Check(const std::string& query, MediaLibrary::MatchKind expected,
     }
 }
 
+// Checks how a string folds, independently of the library.
+void CheckFold(const std::string& input, const std::string& expected) {
+    g_checks++;
+    std::string got = MediaLibrary::Normalize(input);
+    bool ok = got == expected;
+    printf("%s  fold  %-30s -> %-30s (expected: %s)\n", ok ? "PASS" : "FAIL",
+           input.c_str(), got.c_str(), expected.c_str());
+    if (!ok) {
+        g_failures++;
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -115,10 +129,53 @@ int main() {
     Check("merry christmas", MediaLibrary::MatchKind::kUnique, "We Wish You a Merry Christmas");
     Check("rock music", MediaLibrary::MatchKind::kUnique, "Rock Song");
 
+    printf("\n-- titles in other scripts --\n");
+    /* SCRIPT_CASES */
+
+    printf("\n-- folding --\n");
+    /* FOLD_CASES */
+
     printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }
 """
+
+# Titles in other alphabets. A title must stay reachable by name whatever
+# script it uses, and the accents must fold to the ASCII base letter.
+FOLD_CASES = [
+    ("es", "canción", "cancion"),
+    ("es", "niño pequeño", "nino pequeno"),
+    ("es", "español", "espanol"),
+    ("fr", "château", "chateau"),
+    ("fr", "garçon", "garcon"),
+    ("pt", "coração", "coracao"),
+    ("it", "perché", "perche"),
+    ("de", "über", "uber"),
+    ("de", "müller", "muller"),
+    ("de", "straße", "strasse"),
+    ("nl", "ijs", "ijs"),
+    ("sv", "härlig", "harlig"),
+    ("da", "blå", "bla"),
+    ("pl", "łódź", "lodz"),
+    ("pl", "święty", "swiety"),
+    ("pl", "żółw", "zolw"),
+    ("cs", "příliš", "prilis"),
+    ("tr", "ağaç", "agac"),
+    ("tr", "ışık", "isik"),
+    ("ro", "șoaptă", "soapta"),
+    ("el", "ΑΓΆΠΗ", "αγάπη"),
+]
+
+# Titles in scripts that are not Latin at all. They used to fold to an empty
+# string, which made them impossible to find.
+SCRIPT_TITLES = [
+    "Αγάπη",
+    "Кино",
+    "茉莉",
+    "Łódź",
+    "Straße",
+    "Café",
+]
 
 TRACKS = [
     "Caperucita Roja.mp3",
@@ -153,16 +210,32 @@ class MediaLibrarySearchTests(unittest.TestCase):
         library_dir.mkdir(parents=True)
         for name in TRACKS:
             (library_dir / name).write_bytes(b"x")
+        for name in SCRIPT_TITLES:
+            (library_dir / (name + ".mp3")).write_bytes(b"x")
         (library_dir / "sub").mkdir()
         (library_dir / "sub" / "Subfolder Song.mp3").write_bytes(b"x")
 
-        (work / "harness.cc").write_text(HARNESS)
+        harness = HARNESS.replace(
+            "/* FOLD_CASES */",
+            "\n".join(
+                '    CheckFold("%s", "%s");' % (text, expected)
+                for _lang, text, expected in FOLD_CASES
+            ),
+        ).replace(
+            "/* SCRIPT_CASES */",
+            "\n".join(
+                '    Check("%s", MediaLibrary::MatchKind::kUnique, "%s");' % (name, name)
+                for name in SCRIPT_TITLES
+            ),
+        )
+        (work / "harness.cc").write_text(harness)
 
         cls.binary = str(work / "media-library-test")
         subprocess.run(
             ["c++", "-std=c++17", "-Wall", "-Werror",
              "-I", str(work), "-I", str(LIBRARY_HEADER.parent),
-             str(work / "media_library.cc"), str(work / "harness.cc"),
+             str(work / "media_library.cc"), str(MEDIA_TEXT), str(UNICODE_TABLES),
+             str(work / "harness.cc"),
              "-o", cls.binary],
             check=True,
         )

@@ -117,8 +117,9 @@ The query is normalized (lowercase, no accents, no punctuation) and split into w
    for *"caperucita roja"* answer with *"caperucita azul"*, and the robot played the wrong
    song while saying it was playing.
 2. **Filler words are dropped** before comparing: articles, prepositions and words about the
-   request itself (`la`, `de`, `el`, `pon`, `canción`, `música`, `play`, `song`…). Without this,
-   *"la caperucita roja"* would not find *"Caperucita Roja"*, because `la` is in neither title.
+   request itself, in Spanish, English, German, French, Portuguese, Italian and Dutch. Without
+   this, *"la caperucita roja"* would not find *"Caperucita Roja"*, because `la` is in neither
+   title.
 3. A query made of nothing but filler words matches nothing: it carries no information, and
    answering with an arbitrary track would be worse than saying the song is not there.
 4. Several matching tracks give `ambiguous` with up to five candidates; exactly one gives
@@ -128,6 +129,29 @@ The query is normalized (lowercase, no accents, no punctuation) and split into w
 
 The rules are exercised against the real code by `scripts/tests/test_media_library.py`, which
 compiles `main/media/media_library.cc` on the host with a stubbed `esp_log.h`.
+
+### Languages
+
+Text folding is Unicode aware, so a title is found whatever script it uses:
+
+- **Latin letters with diacritics fold to their ASCII base.** `canción` → `cancion`,
+  `müller` → `muller`, `łódź` → `lodz`, `ışık` → `isik`, `straße` → `strasse`. This covers
+  Spanish, French, Portuguese, Italian, German, Dutch, the Nordic languages, Polish, Czech,
+  Turkish, Romanian and Vietnamese.
+- **Letters of every other script are kept and only case folded.** A Greek, Cyrillic, Hebrew,
+  Arabic or CJK title stays reachable. They used to fold to an empty string, which made those
+  tracks impossible to find.
+- **Combining marks are dropped**, so a letter written with an accent and the same letter
+  written as a base letter plus a combining mark compare equal.
+- **Spaces, punctuation and symbols become a single separator.**
+
+The tables behind this are generated from the Unicode database by
+`main/media/tools/gen_unicode_tables.py` and checked in as `main/media/unicode_tables.cc`, so a
+normal build never needs Python:
+
+```sh
+python3 main/media/tools/gen_unicode_tables.py
+```
 
 ---
 

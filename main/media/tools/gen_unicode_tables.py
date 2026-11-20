@@ -1,0 +1,285 @@
+#!/usr/bin/env python3
+"""Generate the Unicode tables used by main/media/media_text.cc.
+
+Run it from the repository root:
+
+    python3 main/media/tools/gen_unicode_tables.py
+
+The output is main/media/unicode_tables.cc. It is checked in, so a normal
+build never needs Python; regenerate it only when the rules change.
+
+The tables fold a title or a spoken query to a comparable form:
+
+  - Latin letters with diacritics become their ASCII base letter, so
+    "Caperucita" and "Caperucita" compare equal.
+  - Other scripts keep their letters and are only case folded, so a Greek,
+    Cyrillic or CJK title stays reachable instead of collapsing to nothing.
+  - Punctuation, symbols and spaces become a single separator.
+  - Combining marks are dropped, so a precomposed "e" with an accent and
+    the same letter written as a base letter plus a combining mark compare
+    equal.
+"""
+
+import pathlib
+import sys
+import unicodedata
+
+# Blocks folded down to plain ASCII. Everything else keeps its own letters.
+LATIN_BLOCKS = [
+    (0x00C0, 0x024F),   # Latin-1 Supplement, Latin Extended-A, Latin Extended-B
+    (0x1E00, 0x1EFF),   # Latin Extended Additional
+]
+
+# Letters whose ASCII form is two characters.
+EXPANSIONS = {
+    "ß": "ss",  # ß
+    "ẞ": "SS",  # ẞ
+    "æ": "ae",  # æ
+    "Æ": "AE",  # Æ
+    "œ": "oe",  # œ
+    "Œ": "OE",  # Œ
+    "ĳ": "ij",  # ĳ
+    "Ĳ": "IJ",  # Ĳ
+    "ŉ": "n",   # ŉ
+    "ŋ": "n",   # ŋ
+    "Ŋ": "N",   # Ŋ
+    "ø": "o",   # ø
+    "Ø": "O",   # Ø
+    "þ": "th",  # þ
+    "Þ": "TH",  # Þ
+    "ð": "d",   # ð
+    "Ð": "D",   # Ð
+    "ł": "l",   # ł
+    "Ł": "L",   # Ł
+    "ĸ": "k",   # ĸ
+    "ı": "i",   # ı
+    "ŀ": "l",   # ŀ
+    "ſ": "s",   # ſ
+    "ŧ": "t",   # ŧ
+    "ƀ": "b",   # ƀ
+    "Ƀ": "B",   # Ƀ
+    "ɇ": "e",   # ɇ
+    "Ɉ": "E",   # Ɉ
+    "Ɍ": "r",   # Ɍ
+    "ɍ": "r",   # ɍ
+    "ʀ": "r",   # ʀ
+    "ʁ": "r",   # ʁ
+    "ɂ": "s",   # ɂ
+    "Ʉ": "u",   # Ʉ
+    "Ɇ": "e",   # Ɇ
+    "ɇ": "e",   # ɇ
+    "Ɉ": "E",   # Ɉ
+}
+
+# Categories that separate words.
+SEPARATOR_CATEGORIES = {
+    "Zs", "Zl", "Zp",   # spaces
+    "Cc", "Cf",         # control and format
+    "Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po",  # punctuation
+    "Sm", "Sc", "Sk", "So",  # symbols
+}
+
+# Categories that are dropped: they carry the accent of a decomposed letter.
+DROP_CATEGORIES = {"Mn", "Me"}
+
+
+def ascii_base(ch):
+    """Return the ASCII base letter of a Latin letter, or None."""
+    decomposed = unicodedata.normalize("NFD", ch)
+    stripped = "".join(c for c in decomposed if unicodedata.category(c) not in DROP_CATEGORIES)
+    if len(stripped) == 1 and stripped.isascii() and stripped.isalpha():
+        return stripped.lower()
+    return None
+
+
+def build():
+    latin = {}       # codepoint -> ascii base letter (single char)
+    latin_expand = {}  # codepoint -> expansion string
+    for start, end in LATIN_BLOCKS:
+        for cp in range(start, end + 1):
+            ch = chr(cp)
+            if ch in EXPANSIONS:
+                latin_expand[cp] = EXPANSIONS[ch].lower()
+                continue
+            base = ascii_base(ch)
+            if base is not None:
+                latin[cp] = base
+
+    # Case folding for everything that is not Latin: the lowercase of the
+    # character, so a spoken lower case query matches a title written in
+    # capitals.
+    case_fold = {}
+    for cp in range(0x80, 0x10000):
+        ch = chr(cp)
+        if cp in latin or cp in latin_expand:
+            continue
+        lower = ch.lower()
+        if len(lower) == 1 and ord(lower) != cp:
+            case_fold[cp] = ord(lower)
+
+    # Ranges of code points that separate words. Everything not listed here
+    # and not dropped keeps its letters.
+    separator = set()
+    dropped = set()
+    for cp in range(0x80, 0x10000):
+        category = unicodedata.category(chr(cp))
+        if category in SEPARATOR_CATEGORIES:
+            separator.add(cp)
+        elif category in DROP_CATEGORIES:
+            dropped.add(cp)
+
+    return latin, latin_expand, case_fold, separator, dropped
+
+
+def to_ranges(values):
+    """Turn a set of code points into a sorted list of (start, end) ranges."""
+    ranges = []
+    for cp in sorted(values):
+        if ranges and cp == ranges[-1][1] + 1:
+            ranges[-1][1] = cp
+        else:
+            ranges.append([cp, cp])
+    return [tuple(r) for r in ranges]
+
+
+def to_fold_ranges(mapping):
+    """Group code points that share the same lower case delta into ranges."""
+    groups = {}
+    for cp, lower in mapping.items():
+        groups.setdefault(lower - cp, []).append(cp)
+    entries = []
+    for delta, cps in groups.items():
+        for start, end in to_ranges(set(cps)):
+            entries.append((start, end, delta))
+    entries.sort()
+    return entries
+
+
+def emit(path):
+    latin, latin_expand, case_fold, separator, dropped = build()
+
+    lines = []
+    lines.append("// Generated by main/media/tools/gen_unicode_tables.py. Do not edit by hand.")
+    lines.append("//")
+    lines.append("// Folds Latin letters with diacritics down to their ASCII base and keeps")
+    lines.append("// the letters of every other script, so a title in any language stays")
+    lines.append("// reachable by name.")
+    lines.append("")
+    lines.append('#include "media_text.h"')
+    lines.append("")
+    lines.append("namespace media {")
+    lines.append("namespace {")
+    lines.append("")
+
+    # Latin fold table, indexed by code point minus the first block start.
+    lines.append("constexpr uint32_t kLatinBlockStart = 0x00C0;")
+    lines.append("constexpr uint32_t kLatinBlockEnd = 0x024F;")
+    lines.append("constexpr uint32_t kLatinExtraStart = 0x1E00;")
+    lines.append("constexpr uint32_t kLatinExtraEnd = 0x1EFF;")
+    lines.append("")
+    lines.append("// ASCII base letter for every Latin code point, 0 when there is none.")
+    lines.append("constexpr char kLatinFold[] = {")
+    for cp in range(0x00C0, 0x0250):
+        value = latin.get(cp, "")
+        lines.append("    '%s'," % (value if value else "\\0"))
+    lines.append("};")
+    lines.append("")
+    lines.append("constexpr char kLatinFoldExtra[] = {")
+    for cp in range(0x1E00, 0x1F00):
+        value = latin.get(cp, "")
+        lines.append("    '%s'," % (value if value else "\\0"))
+    lines.append("};")
+    lines.append("")
+
+    # Expansions.
+    lines.append("constexpr Expansion kExpansions[] = {")
+    for cp in sorted(latin_expand):
+        lines.append('    {0x%04X, "%s"},' % (cp, latin_expand[cp]))
+    lines.append("};")
+    lines.append("")
+
+    # Case folding.
+    fold_ranges = to_fold_ranges(case_fold)
+    lines.append("constexpr FoldRange kCaseFolds[] = {")
+    for start, end, delta in fold_ranges:
+        lines.append("    {0x%04X, 0x%04X, %d}," % (start, end, delta))
+    lines.append("};")
+    lines.append("")
+
+    # Separator and dropped ranges.
+    for name, values in (("kSeparators", separator), ("kDropped", dropped)):
+        lines.append("constexpr Range %s[] = {" % name)
+        for start, end in to_ranges(values):
+            lines.append("    {0x%04X, 0x%04X}," % (start, end))
+        lines.append("};")
+        lines.append("")
+
+    lines.append("}  // namespace")
+    lines.append("")
+    lines.append("int16_t LatinFoldBase(uint32_t codepoint) {")
+    lines.append("    if (codepoint >= kLatinBlockStart && codepoint <= kLatinBlockEnd) {")
+    lines.append("        return kLatinFold[codepoint - kLatinBlockStart];")
+    lines.append("    }")
+    lines.append("    if (codepoint >= kLatinExtraStart && codepoint <= kLatinExtraEnd) {")
+    lines.append("        return kLatinFoldExtra[codepoint - kLatinExtraStart];")
+    lines.append("    }")
+    lines.append("    return kNotLatin;")
+    lines.append("}")
+    lines.append("")
+    lines.append("const Expansion* FindExpansion(uint32_t codepoint) {")
+    lines.append("    size_t low = 0;")
+    lines.append("    size_t high = sizeof(kExpansions) / sizeof(kExpansions[0]);")
+    lines.append("    while (low < high) {")
+    lines.append("        size_t mid = low + (high - low) / 2;")
+    lines.append("        if (codepoint < kExpansions[mid].codepoint) {")
+    lines.append("            high = mid;")
+    lines.append("        } else if (codepoint > kExpansions[mid].codepoint) {")
+    lines.append("            low = mid + 1;")
+    lines.append("        } else {")
+    lines.append("            return &kExpansions[mid];")
+    lines.append("        }")
+    lines.append("    }")
+    lines.append("    return nullptr;")
+    lines.append("}")
+    lines.append("")
+    # The ranges are sorted, so they are searched with a binary search.
+    for name, table, body, ret, fallback in (
+        ("FindCaseFold", "kCaseFolds", "return %s[mid].delta;" % "kCaseFolds", "int32_t", "0"),
+        ("IsSeparator", "kSeparators", "return true;", "bool", "false"),
+        ("IsDropped", "kDropped", "return true;", "bool", "false"),
+    ):
+        lines.append("%s %s(uint32_t codepoint) {" % (ret, name))
+        lines.append("    size_t low = 0;")
+        lines.append("    size_t high = sizeof(%s) / sizeof(%s[0]);" % (table, table))
+        lines.append("    while (low < high) {")
+        lines.append("        size_t mid = low + (high - low) / 2;")
+        lines.append("        if (codepoint < %s[mid].start) {" % table)
+        lines.append("            high = mid;")
+        lines.append("        } else if (codepoint > %s[mid].end) {" % table)
+        lines.append("            low = mid + 1;")
+        lines.append("        } else {")
+        lines.append("            %s" % body)
+        lines.append("        }")
+        lines.append("    }")
+        lines.append("    return %s;" % fallback)
+        lines.append("}")
+        lines.append("")
+    lines.append("}  // namespace media")
+    lines.append("")
+
+    path.write_text("\n".join(lines))
+
+    print("wrote %s" % path)
+    print("  latin fold entries : %d" % len(latin))
+    print("  latin expansions   : %d" % len(latin_expand))
+    print("  case fold ranges   : %d" % len(fold_ranges))
+    print("  separator ranges   : %d" % len(to_ranges(separator)))
+    print("  dropped ranges     : %d" % len(to_ranges(dropped)))
+
+
+if __name__ == "__main__":
+    root = pathlib.Path(__file__).resolve().parents[3]
+    target = root / "main" / "media" / "unicode_tables.cc"
+    if len(sys.argv) > 1:
+        target = pathlib.Path(sys.argv[1])
+    emit(target)

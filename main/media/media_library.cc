@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <set>
 
+#include "media_text.h"
+
 #define TAG "MediaLibrary"
 
 namespace {
@@ -16,19 +18,6 @@ constexpr int kMaxDepth = 1;
 
 bool HasMp3Extension(const std::string& name) {
     return name.size() > 4 && strcasecmp(name.c_str() + name.size() - 4, ".mp3") == 0;
-}
-
-char BaseLetterForLatin1(unsigned char c) {
-    switch (c) {
-        case 0xA0: case 0xA1: case 0xA2: case 0xA3: case 0xA4: case 0xA5: return 'a';
-        case 0xA7: return 'c';
-        case 0xA8: case 0xA9: case 0xAA: case 0xAB: return 'e';
-        case 0xAC: case 0xAD: case 0xAE: case 0xAF: return 'i';
-        case 0xB1: return 'n';
-        case 0xB2: case 0xB3: case 0xB4: case 0xB5: case 0xB6: return 'o';
-        case 0xB9: case 0xBA: case 0xBB: case 0xBC: return 'u';
-        default: return ' ';
-    }
 }
 
 std::string TitleFromPath(const std::string& path) {
@@ -42,6 +31,9 @@ std::string TitleFromPath(const std::string& path) {
 // Filler words carry no information about a title, so they are dropped
 // before matching. Without this, "la caperucita roja" would not find the
 // track "Caperucita Roja", because "la" is in neither of them.
+//
+// The list covers the main European languages plus the words used to ask for
+// a song, so a spoken request in any of them still finds the title.
 const char* const kStopwords[] = {
     // Spanish
     "a", "al", "algo", "alguna", "algunas", "alguno", "algunos", "ante", "antes",
@@ -60,12 +52,46 @@ const char* const kStopwords[] = {
     "please", "so", "some", "that", "the", "their", "them", "then", "there", "they",
     "this", "to", "up", "want", "was", "were", "what", "when", "where", "which",
     "who", "will", "with", "would", "you",
+    // German
+    "aber", "alle", "als", "also", "am", "an", "auch", "auf", "aus", "bei", "bin",
+    "bis", "das", "dass", "dem", "den", "der", "des", "die", "ein", "eine", "einem",
+    "einen", "einer", "eines", "er", "es", "für", "hatte", "ich", "ihr", "im", "in",
+    "ist", "kann", "man", "mein", "mit", "nach", "nicht", "noch", "nur", "oder",
+    "sein", "sich", "sie", "sind", "so", "über", "und", "uns", "von", "vor", "war",
+    "was", "weil", "welche", "wenn", "wer", "werden", "wie", "wir", "wird", "zu",
+    // French
+    "alors", "au", "aucun", "aussi", "autre", "aux", "avec", "avant", "bien", "car",
+    "ce", "cela", "ces", "dans", "de", "des", "du", "elle", "en", "encore", "est",
+    "et", "eux", "fait", "ici", "il", "ils", "je", "la", "le", "les", "leur", "lui",
+    "ma", "mais", "me", "même", "mes", "moi", "mon", "ne", "nos", "notre", "nous",
+    "on", "ou", "par", "pas", "pour", "quand", "que", "qui", "sa", "se", "ses", "son",
+    "sur", "ta", "te", "tes", "toi", "ton", "tu", "un", "une", "vos", "votre", "vous",
+    "y",
+    // Portuguese
+    "a", "ao", "aos", "as", "com", "como", "da", "das", "de", "do", "dos", "e",
+    "ela", "ele", "em", "entre", "essa", "esse", "esta", "este", "eu", "foi", "isso",
+    "isto", "já", "lhe", "mais", "mas", "me", "mesmo", "meu", "minha", "muito", "na",
+    "não", "nas", "nem", "no", "nos", "nós", "num", "numa", "o", "os", "ou", "para",
+    "pela", "pelo", "por", "que", "quem", "se", "sem", "ser", "seu", "sua", "são",
+    "só", "também", "te", "tem", "tu", "tua", "um", "uma", "você", "vos",
+    // Italian
+    "a", "ad", "al", "alla", "alle", "anche", "che", "chi", "come", "con", "cui",
+    "da", "dal", "dalla", "degli", "dei", "del", "della", "delle", "di", "e", "ed",
+    "gli", "ha", "hanno", "i", "il", "in", "io", "la", "le", "lo", "loro", "ma",
+    "mi", "ne", "nel", "nella", "no", "non", "per", "più", "qual", "quale", "questo",
+    "se", "si", "sono", "su", "sul", "tra", "tu", "un", "una", "uno", "voi",
+    // Dutch
+    "aan", "als", "bij", "dan", "dat", "de", "der", "deze", "die", "dit", "door",
+    "een", "en", "er", "geen", "haar", "heb", "het", "hij", "hoe", "ik", "in", "is",
+    "je", "kan", "maar", "me", "meer", "met", "mij", "na", "naar", "niet", "nog",
+    "nu", "of", "om", "ons", "ook", "op", "over", "te", "tot", "uit", "van", "voor",
+    "want", "waren", "was", "wat", "we", "wel", "werd", "wij", "word", "zal", "ze",
     // Words describing the request itself
     "cancion", "canciones", "musica", "pista", "tema", "canto", "karaoke", "song",
     "songs", "music", "track", "tracks", "piece", "pon", "ponme", "poner", "ponlo",
     "toca", "tocar", "escucha", "escuchar", "dame", "dime", "oye", "quiero",
     "quieres", "reproduce", "reproducir", "play", "give", "listen", "hear", "sing",
-    "canta", "cantar",
+    "canta", "cantar", "spiele", "lied", "lieder", "musique", "chanson", "canzone",
 };
 
 bool IsStopword(const std::string& token) {
@@ -118,41 +144,7 @@ MediaLibrary& MediaLibrary::GetInstance() {
 }
 
 std::string MediaLibrary::Normalize(const std::string& text) {
-    std::string out;
-    out.reserve(text.size());
-    auto push = [&out](char c) {
-        if (c == ' ') {
-            if (!out.empty() && out.back() != ' ') {
-                out.push_back(' ');
-            }
-        } else {
-            out.push_back(c);
-        }
-    };
-    for (size_t i = 0; i < text.size(); i++) {
-        unsigned char c = static_cast<unsigned char>(text[i]);
-        if (c < 0x80) {
-            if (c >= 'A' && c <= 'Z') {
-                push(static_cast<char>(c - 'A' + 'a'));
-            } else if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
-                push(static_cast<char>(c));
-            } else {
-                push(' ');
-            }
-        } else if (c == 0xC3 && i + 1 < text.size()) {
-            unsigned char next = static_cast<unsigned char>(text[++i]);
-            if (next >= 0x80 && next <= 0x9F) {
-                next += 0x20;
-            }
-            push(BaseLetterForLatin1(next));
-        } else {
-            push(' ');
-        }
-    }
-    while (!out.empty() && out.back() == ' ') {
-        out.pop_back();
-    }
-    return out;
+    return media::FoldText(text);
 }
 
 void MediaLibrary::ScanDirectory(const std::string& dir, int depth, std::vector<std::string>& out) {
