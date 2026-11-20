@@ -120,7 +120,14 @@ public:
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);
     AudioService& GetAudioService() { return audio_service_; }
-    
+    // Plays an MP3 from the SD card; the path must start with /sdcard/. Returns false if rejected.
+    // If a conversation is open, playback starts once the assistant finishes speaking.
+    bool PlayLocalAudio(const std::string& path);
+    void StopLocalAudio();
+    bool IsLocalAudioPlaying() const {
+        return GetDeviceState() == kDeviceStateNotifying || notify_player_.IsBusy();
+    }
+
     /**
      * Reset protocol resources (thread-safe)
      * Can be called from any task to release resources allocated after network connected
@@ -146,6 +153,9 @@ private:
     AudioService audio_service_;
     NotifyPlayer notify_player_;
     uint32_t notification_playback_id_ = 0;
+    std::string pending_local_audio_;
+    int pending_local_audio_ticks_ = 0;
+    bool pending_local_audio_saw_speaking_ = false;
     std::unique_ptr<Ota> ota_;
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;
@@ -177,8 +187,10 @@ private:
     void ConfigureWakeWordForListening();
     void ShowStartupWakeWordHint();
     void HideStartupWakeWordHint();
-    void StartNotification(std::string audio_url, std::vector<NotifySubtitle> subtitles);
+    void StartNotification(std::string audio_url, std::vector<NotifySubtitle> subtitles,
+                           bool local_file = false);
     void StopNotification();
+    void ResolvePendingLocalAudio();
     void HandleNotificationFinished(uint32_t playback_id, bool success);
 
     // Activation task (runs in background)

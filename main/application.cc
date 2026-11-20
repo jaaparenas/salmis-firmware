@@ -297,6 +297,10 @@ void Application::Run() {
 
         if (bits & MAIN_EVENT_CLOCK_TICK) {
             clock_ticks_++;
+            if (!pending_local_audio_.empty()) {
+                pending_local_audio_ticks_++;
+                ResolvePendingLocalAudio();
+            }
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
 
@@ -611,7 +615,9 @@ void Application::InitializeProtocol() {
         Schedule([this]() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
-            SetDeviceState(kDeviceStateIdle);
+            if (GetDeviceState() != kDeviceStateNotifying) {
+                SetDeviceState(kDeviceStateIdle);
+            }
         });
     });
 
@@ -942,6 +948,10 @@ void Application::HandleWakeWordDetectedEvent() {
     ESP_LOGI(TAG, "Wake word detected: %s (state: %d)", wake_word.c_str(), (int)state);
 
     if (state == kDeviceStateIdle) {
+        if (notify_player_.IsBusy()) {
+            notify_player_.Stop();
+            audio_service_.ResetDecoder();
+        }
         BeginWakeWordInvoke(wake_word);
     } else if (state == kDeviceStateNotifying) {
         StopNotification();
@@ -1036,6 +1046,10 @@ void Application::HandleStateChangedEvent() {
     // Any state change invalidates a pending deferred listening start;
     // the Listening case below re-arms it when needed.
     pending_listening_start_ = false;
+
+    if (new_state == kDeviceStateIdle && !pending_local_audio_.empty()) {
+        Schedule([this]() { ResolvePendingLocalAudio(); });
+    }
 
     auto& board = Board::GetInstance();
     auto display = board.GetDisplay();
@@ -1204,7 +1218,73 @@ void Application::ConfigureWakeWordForListening() {
 #endif
 }
 
-void Application::StartNotification(std::string audio_url, std::vector<NotifySubtitle> subtitles) {
+bool Application::PlayLocalAudio(const std::string& path) {
+    if (path.compare(0, 8, "/sdcard/") != 0 || path.find("..") != std::string::npos) {
+        ESP_LOGW(TAG, "Rejected local audio path: %s", path.c_str());
+        return false;
+    }
+    Schedule([this, path]() {
+        pending_local_audio_ = path;
+        pending_local_audio_ticks_ = 0;
+        pending_local_audio_saw_speaking_ = false;
+        ResolvePendingLocalAudio();
+    });
+    return true;
+}
+
+void Application::StopLocalAudio() {
+    Schedule([this]() {
+        ESP_LOGI(TAG, "StopLocalAudio, state=%d", (int)GetDeviceState());
+        pending_local_audio_.clear();
+        if (GetDeviceState() == kDeviceStateNotifying) {
+            StopNotification();
+        } else if (notify_player_.IsBusy()) {
+            notify_player_.Stop();
+            audio_service_.ResetDecoder();
+        }
+    });
+}
+
+void Application::ResolvePendingLocalAudio() {
+    constexpr int kMaxWaitTicks = 15;
+    if (pending_local_audio_.empty()) {
+        return;
+    }
+
+    auto state = GetDeviceState();
+    if (state == kDeviceStateNotifying) {
+        StopNotification();
+        state = GetDeviceState();
+    }
+    if (state == kDeviceStateIdle) {
+        std::string path = std::move(pending_local_audio_);
+        pending_local_audio_.clear();
+        StartNotification(std::move(path), {}, true);
+        return;
+    }
+
+    bool in_conversation = state == kDeviceStateConnecting || state == kDeviceStateListening ||
+                           state == kDeviceStateSpeaking;
+    if (!in_conversation) {
+        if (pending_local_audio_ticks_ >= kMaxWaitTicks) {
+            ESP_LOGW(TAG, "Dropping pending local audio, device busy");
+            pending_local_audio_.clear();
+        }
+        return;
+    }
+
+    if (state == kDeviceStateSpeaking) {
+        pending_local_audio_saw_speaking_ = true;
+    }
+    bool assistant_done = pending_local_audio_saw_speaking_ && state == kDeviceStateListening &&
+                          audio_service_.IsPlaybackIdle();
+    if ((assistant_done || pending_local_audio_ticks_ >= kMaxWaitTicks) && protocol_) {
+        protocol_->CloseAudioChannel();
+    }
+}
+
+void Application::StartNotification(std::string audio_url, std::vector<NotifySubtitle> subtitles,
+                                    bool local_file) {
     if (GetDeviceState() != kDeviceStateIdle || notify_player_.IsBusy()) {
         ESP_LOGW(TAG, "Ignoring notify message while device is busy");
         return;
@@ -1231,7 +1311,14 @@ void Application::StartNotification(std::string audio_url, std::vector<NotifySub
     }
     audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
 
-    bool started = notify_player_.Start(
+    bool started = local_file ? notify_player_.StartLocalFile(
+                                    audio_url, playback_id,
+                                    [this](uint32_t id, bool success) {
+                                        Schedule([this, id, success]() {
+                                            HandleNotificationFinished(id, success);
+                                        });
+                                    })
+                              : notify_player_.Start(
         std::move(audio_url), std::move(subtitles), playback_id,
         [this](uint32_t id, const std::string& text) {
             Schedule([this, id, text]() {

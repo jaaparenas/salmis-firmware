@@ -27,6 +27,8 @@ public:
 
     bool Start(std::string audio_url, std::vector<NotifySubtitle> subtitles, uint32_t playback_id,
                SubtitleCallback subtitle_callback, FinishedCallback finished_callback);
+    // Plays an MP3 file from the SD card (path must start with /sdcard/).
+    bool StartLocalFile(std::string path, uint32_t playback_id, FinishedCallback finished_callback);
     void Stop();
     void OnPlaybackProgress(uint32_t playback_id, uint32_t media_position_ms);
     void OnPlaybackDrained();
@@ -53,7 +55,12 @@ private:
     bool stream_started_ = false;
     bool playback_drained_ = false;
     bool completion_reported_ = false;
+    bool local_file_ = false;
 
+    bool StartImpl(std::string audio_url, std::vector<NotifySubtitle> subtitles,
+                   uint32_t playback_id, SubtitleCallback subtitle_callback,
+                   FinishedCallback finished_callback, bool local_file);
+    bool PlayLocalFile(const std::string& path, uint32_t playback_id);
     static void WorkerEntry(void* arg);
     void WorkerTask();
     bool IsCancelled(uint32_t playback_id) const;

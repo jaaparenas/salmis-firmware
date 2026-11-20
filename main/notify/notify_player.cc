@@ -9,6 +9,7 @@
 
 #include "board.h"
 #include "http.h"
+#include "media/mp3_file_decoder.h"
 #include "ogg_demuxer.h"
 
 namespace {
@@ -18,8 +19,14 @@ constexpr uint32_t kNotifyTaskStackSize = 6144;
 constexpr UBaseType_t kNotifyTaskPriority = 2;
 const char* TAG = "NotifyPlayer";
 
+constexpr uint32_t kLocalTaskStackSize = 32768;
+
 bool IsSupportedUrl(const std::string& url) {
     return url.compare(0, 7, "http://") == 0 || url.compare(0, 8, "https://") == 0;
+}
+
+bool IsLocalAudioPath(const std::string& path) {
+    return path.compare(0, 8, "/sdcard/") == 0 && path.find("..") == std::string::npos;
 }
 }  // namespace
 
@@ -30,7 +37,21 @@ NotifyPlayer::~NotifyPlayer() { Stop(); }
 bool NotifyPlayer::Start(std::string audio_url, std::vector<NotifySubtitle> subtitles,
                          uint32_t playback_id, SubtitleCallback subtitle_callback,
                          FinishedCallback finished_callback) {
-    if (playback_id == 0 || !IsSupportedUrl(audio_url)) {
+    return StartImpl(std::move(audio_url), std::move(subtitles), playback_id,
+                     std::move(subtitle_callback), std::move(finished_callback), false);
+}
+
+bool NotifyPlayer::StartLocalFile(std::string path, uint32_t playback_id,
+                                  FinishedCallback finished_callback) {
+    return StartImpl(std::move(path), {}, playback_id, nullptr, std::move(finished_callback),
+                     true);
+}
+
+bool NotifyPlayer::StartImpl(std::string audio_url, std::vector<NotifySubtitle> subtitles,
+                             uint32_t playback_id, SubtitleCallback subtitle_callback,
+                             FinishedCallback finished_callback, bool local_file) {
+    bool valid = local_file ? IsLocalAudioPath(audio_url) : IsSupportedUrl(audio_url);
+    if (playback_id == 0 || !valid) {
         return false;
     }
 
@@ -45,6 +66,7 @@ bool NotifyPlayer::Start(std::string audio_url, std::vector<NotifySubtitle> subt
             return false;
         }
         audio_url_ = std::move(audio_url);
+        local_file_ = local_file;
         subtitles_ = std::move(subtitles);
         displayed_text_.clear();
         subtitle_callback_ = std::move(subtitle_callback);
@@ -62,7 +84,8 @@ bool NotifyPlayer::Start(std::string audio_url, std::vector<NotifySubtitle> subt
         completion_reported_ = false;
     }
 
-    BaseType_t created = xTaskCreate(WorkerEntry, "notify_http", kNotifyTaskStackSize, this,
+    BaseType_t created = xTaskCreate(WorkerEntry, local_file ? "notify_local" : "notify_http",
+                                     local_file ? kLocalTaskStackSize : kNotifyTaskStackSize, this,
                                      kNotifyTaskPriority, &task_handle_);
     if (created != pdPASS) {
         ESP_LOGE(TAG, "Failed to create notification HTTP task");
@@ -165,6 +188,40 @@ void NotifyPlayer::OnPlaybackDrained() {
     }
 }
 
+bool NotifyPlayer::PlayLocalFile(const std::string& path, uint32_t playback_id) {
+    uint32_t media_position_ms = 0;
+    return Mp3FileDecoder::Decode(
+        path,
+        [this, playback_id, &media_position_ms](const uint8_t* data, size_t size) {
+            if (IsCancelled(playback_id)) {
+                return false;
+            }
+            auto packet = std::make_unique<AudioStreamPacket>();
+            packet->sample_rate = Mp3FileDecoder::kSampleRate;
+            packet->frame_duration = Mp3FileDecoder::kFrameDurationMs;
+            packet->playback_id = playback_id;
+            packet->media_position_ms = media_position_ms;
+            packet->payload.assign(data, data + size);
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (cancelled_ || !active_ || playback_id != playback_id_) {
+                    return false;
+                }
+                playback_drained_ = false;
+            }
+            if (!audio_service_.PushPacketToDecodeQueue(std::move(packet), true)) {
+                return false;
+            }
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                stream_started_ = true;
+            }
+            media_position_ms += Mp3FileDecoder::kFrameDurationMs;
+            return true;
+        },
+        [this, playback_id]() { return IsCancelled(playback_id); });
+}
+
 void NotifyPlayer::WorkerEntry(void* arg) {
     auto* player = static_cast<NotifyPlayer*>(arg);
     player->WorkerTask();
@@ -174,14 +231,19 @@ void NotifyPlayer::WorkerEntry(void* arg) {
 void NotifyPlayer::WorkerTask() {
     std::string audio_url;
     uint32_t playback_id = 0;
+    bool local_file = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         audio_url = audio_url_;
         playback_id = playback_id_;
+        local_file = local_file_;
     }
 
     bool success = false;
-    auto http = Board::GetInstance().GetNetwork()->CreateHttp(0);
+    if (local_file) {
+        success = PlayLocalFile(audio_url, playback_id);
+    }
+    auto http = local_file ? nullptr : Board::GetInstance().GetNetwork()->CreateHttp(0);
     if (http) {
         http->SetTimeout(kHttpTimeoutMs);
         http->SetHeader("Accept", "audio/ogg, application/ogg");
