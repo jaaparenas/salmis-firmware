@@ -108,6 +108,27 @@ The card is mounted at `/sdcard`. If it is missing the boot continues and the re
 Titles come from the file name: underscores become spaces and the `.mp3` extension is dropped.
 The index holds up to 500 tracks and one folder level below `/sdcard/mp3`.
 
+### How a title is found
+
+The query is normalized (lowercase, no accents, no punctuation) and split into words:
+
+1. **A track matches only when it contains every word of the query.** Matching some of them is
+   not enough. An earlier rule accepted a match when half the words matched, which made asking
+   for *"caperucita roja"* answer with *"caperucita azul"*, and the robot played the wrong
+   song while saying it was playing.
+2. **Filler words are dropped** before comparing: articles, prepositions and words about the
+   request itself (`la`, `de`, `el`, `pon`, `canción`, `música`, `play`, `song`…). Without this,
+   *"la caperucita roja"* would not find *"Caperucita Roja"*, because `la` is in neither title.
+3. A query made of nothing but filler words matches nothing: it carries no information, and
+   answering with an arbitrary track would be worse than saying the song is not there.
+4. Several matching tracks give `ambiguous` with up to five candidates; exactly one gives
+   `unique`.
+5. **An exact title wins** over a longer one that merely contains it, so *"caperucita roja"*
+   does not turn into a question when the library also has *"caperucita roja y el lobo"*.
+
+The rules are exercised against the real code by `scripts/tests/test_media_library.py`, which
+compiles `main/media/media_library.cc` on the host with a stubbed `esp_log.h`.
+
 ---
 
 ## Cloud audio is refused
