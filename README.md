@@ -83,6 +83,25 @@ mounted over SDSPI on its own SPI bus. The upstream board is left untouched.
 
 The card is mounted at `/sdcard`. If it is missing the boot continues and the reason is logged.
 
+### Faces and the listening hint
+
+The board owns the face while the robot is doing something, so the screen always says what it
+is up to:
+
+| State | Face | On screen |
+|---|---|---|
+| Idle | the expression the server asks for | the clock at the top |
+| Listening | **surprised** | **"Listening..." at the bottom** |
+| Playing music from the card | **cool** | the clock at the top |
+
+The expression the server asks for does not replace those faces while the robot is listening or
+playing, so the face always matches what the robot is doing. The hint is the firmware's own
+`Lang::Strings::LISTENING`, so it follows the language the build was made with.
+
+The hint inherits the font from the screen, the same way the clock does. A label that keeps its
+own font pointer is freed when the theme font is swapped and ends up pointing at released
+memory, which reboots the robot in a loop.
+
 ### Animated expressions and photo slideshow
 
 - **21 animated expressions** in `main/boards/salmis-s3/emoji`, 240×240 GIF in a kawaii style,
