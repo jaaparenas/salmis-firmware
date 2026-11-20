@@ -18,3 +18,50 @@ main/mmap_generate_emoji.h
 *.bin
 mmap_generate_*.h
 .clangd
+
+# --- Credenciales y datos sensibles (nunca deben llegar al remoto) ---
+# Claves y certificados
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.crt
+*.cer
+*.der
+*.asc
+*.gpg
+*.kdbx
+
+# Variables de entorno y credenciales
+.env
+.env.*
+!.env.example
+*credentials*
+*secrets*.json
+*secrets*.yaml
+*secrets*.yml
+.netrc
+.git-credentials
+
+# Directorios de herramientas
+.ssh/
+.aws/
+.gnupg/
+.claude/
+.opencode/
+
+# Dumps de memoria flash y de NVS del dispositivo (contienen las
+# credenciales de Wi-Fi y de activacion del robot)
+nvs*.bin
+*flash*.bin
+robot-fabrica-*.bin
+*.nvram
+
+# Datos de identificacion personal del hardware
+*90:70:69*
+
+# Copias de seguridad de la flash
+backup-*.bin
+*.bak
