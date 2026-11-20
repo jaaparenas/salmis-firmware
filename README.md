@@ -1,177 +1,195 @@
-# An MCP-based Chatbot
+# Salmis
 
-(English | [中文](README_zh.md) | [日本語](README_ja.md))
+Firmware for the commercial **XiaoZhi AI Voice Chat Robot** (ESP32-S3 N16R8, 1.28" round
+LCD, touch, battery) that plays music and stories from a **microSD card** and is controlled by
+voice through the device's own MCP tools.
 
-## Introduction
+This is a fork of [78/xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) (upstream commit
+`aaf1eb7`, firmware 2.6.0). The upstream project is not modified: every change lives in this
+repository on the `salmis` branch, and the upstream `main` branch is kept in sync so updates can
+be merged.
 
-📖 [XiaoZhi AI Guides & Help](https://docs.xiaozhi.me/en/)
+> **The local library is the only music source.** The cloud has a music search of its own. On
+> this device that audio is refused, so music always comes from the microSD card.
 
-👉 [Human: Give AI a camera vs AI: Instantly finds out the owner hasn't washed hair for three days【bilibili】](https://www.bilibili.com/video/BV1bpjgzKEhd/)
+---
 
-👉 [Handcraft your AI girlfriend, beginner's guide【bilibili】](https://www.bilibili.com/video/BV1XnmFYLEJN/)
+## What this fork adds
 
-As a voice interaction entry, the XiaoZhi AI chatbot leverages the AI capabilities of large models like Qwen / DeepSeek, and achieves multi-terminal control via the MCP protocol.
+### Local MP3 playback
 
-<img src="docs/mcp-based-graph.jpg" alt="Control everything via MCP" width="320">
+| | Upstream | Salmis |
+|---|---|---|
+| Music source | Cloud only (streamed over HTTP) | microSD card, offline |
+| Trigger | Cloud agent | Voice (`self.media.play`), BOOT long press |
+| Search | Cloud music search | Local index, accent- and case-insensitive |
+| Needs network | Yes | No |
 
-## Recent Updates
+The MP3 is decoded with `esp_audio_simple_dec`, mixed down to mono, resampled to 24 kHz and
+re-encoded as 60 ms Opus frames, which is exactly what the existing decode queue consumes. The
+player reuses the upstream `NotifyPlayer` pipeline, so playback, cancellation, wake word
+interruption and the "assistant finished speaking" handshake all behave like a server
+notification would.
 
-- The project now requires ESP-IDF v6.0.1 or later. [ESP-IDF `release/v6.1`](https://github.com/espressif/esp-idf/tree/release/v6.1) is the recommended SDK branch. ESP-IDF 5.x is no longer supported. The current matrix contains 171 variants; ESP32-S31 builds require IDF 6.1 or later.
-- MQTT and BluFi cryptographic code has migrated to PSA Crypto. IDF 6 component splits and third-party dependency compatibility have also been addressed.
-- Audio pipeline concurrency, MQTT/UDP packet validation, and release-matrix selection have been hardened.
-- ESP32-P4 Rev1 and Rev3 are both supported on IDF 6 with ESP-SR 2.4.7.
+### Device-side MCP tools
 
-### Features Implemented
+| Tool | Purpose |
+|---|---|
+| `self.media.play` | Play a track by title or id. Returns `playing`, `not_found`, `ambiguous` or `storage_unavailable` |
+| `self.media.stop` | Stop the current track |
+| `self.media.status` | Whether something is playing, and which track |
+| `self.media.list` | Browse the library, 10 tracks per page |
+| `self.media.rescan` | Re-index the card (user-only tool) |
 
-- Wi-Fi, wired Ethernet, USB RNDIS, and ML307/EC801E or NT26 Cat.1 4G networking; supported boards can switch between Wi-Fi and 4G
-- Offline voice wake-up with [ESP-SR](https://github.com/espressif/esp-sr), including customizable wake words
-- Two communication transports: [WebSocket](docs/websocket.md) and [MQTT + UDP](docs/mqtt-udp.md)
-- Opus audio streaming with conventional streaming ASR + LLM + TTS pipelines and Realtime end-to-end voice models; AEC-capable hardware supports realtime full-duplex interaction
-- Speaker recognition, identifies the current speaker [3D Speaker](https://github.com/modelscope/3D-Speaker)
-- OLED / LCD displays with emoji and rich expression support, plus camera vision input on supported boards
-- Battery display and power management
-- 39 interface languages, with localized voice prompts where available and English fallback
-- ESP32, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-S3, and ESP32-P4 chip platforms
-- Wi-Fi provisioning through hotspot or BluFi
-- Device-side MCP for device control (Speaker, LED, Servo, GPIO, etc.)
-- Cloud-side MCP to extend large model capabilities (smart home control, PC desktop operation, knowledge search, email, etc.)
-- Customizable wake words, fonts, emojis, and chat backgrounds with online web-based editing ([Custom Assets Generator](https://github.com/78/xiaozhi-assets-generator))
+The assistant only ever passes an **id or a title**. Paths never come from the model: they are
+validated in both `Application` and `NotifyPlayer` (`/sdcard/` prefix, no `..`).
 
-## Hardware
+### New board: `salmis-s3`
 
-### Breadboard DIY Practice
+A copy of the confirmed upstream board `spotpear/sp-esp32-s3-1.28-box` plus a microSD slot
+mounted over SDSPI on its own SPI bus. The upstream board is left untouched.
 
-Follow the step-by-step breadboard tutorial:
+| Function | Pins |
+|---|---|
+| microSD (SDSPI, SPI2) | CS 13, MOSI 18, SCK 17, MISO 21 |
+| Display GC9A01 240×240 | SCLK 4, MOSI 2, CS 5, DC 47, RST 38, backlight 42 |
+| Audio ES8311 | MCLK 16, WS 45, BCLK 9, DIN 10, DOUT 8, PA 46, I2C 15/14 |
+| Touch CST816D | SDA 11, SCL 7, RST 6, INT 12 |
+| Battery | ADC 1, charging 41 |
+| LED / BOOT / RTC hold | 48 / 0 / 3 |
 
-👉 [ESP32-S3 Breadboard Tutorial](https://docs.xiaozhi.me/en/hardware/breadboard-esp32-s3.html)
+The card is mounted at `/sdcard`. If it is missing the boot continues and the reason is logged.
 
-Breadboard demo:
+### Animated expressions and photo slideshow
 
-![Breadboard Demo](docs/v1/wiring2.jpg)
+- **21 animated expressions** in `main/boards/salmis-s3/emoji`, 240×240 GIF in a kawaii style,
+  generated by `tools/gen_emoji.py`, which also checks that the visible content fits inside the
+  round screen. They are packaged into the assets partition.
+- **Photo slideshow**: after 60 s idle the robot shows the JPEGs in `/sdcard/images` (or
+  `/sdcard/imagenes`), changing every 8 s with the clock overlaid. Any interaction brings the
+  eyes back.
+- BOOT long press plays the next track, short press stops it.
 
-### Supports 138 Board Directories and 171 Release Variants (Partial List)
+---
 
-- <a href="https://oshwhub.com/li-chuang-kai-fa-ban/li-chuang-shi-zhan-pai-esp32-s3-kai-fa-ban" target="_blank" title="LiChuang ESP32-S3 Development Board">LiChuang ESP32-S3 Development Board</a>
-- <a href="https://github.com/espressif/esp-box" target="_blank" title="Espressif ESP32-S3-BOX-3">Espressif ESP32-S3-BOX-3</a>
-- <a href="https://docs.m5stack.com/zh_CN/core/CoreS3" target="_blank" title="M5Stack CoreS3">M5Stack CoreS3</a>
-- <a href="https://docs.m5stack.com/en/atom/Atomic%20Echo%20Base" target="_blank" title="AtomS3R + Echo Base">M5Stack AtomS3R + Echo Base</a>
-- <a href="https://gf.bilibili.com/item/detail/1108782064" target="_blank" title="Magic Button 2.4">Magic Button 2.4</a>
-- <a href="https://www.waveshare.net/shop/ESP32-S3-Touch-AMOLED-1.8.htm" target="_blank" title="Waveshare ESP32-S3-Touch-AMOLED-1.8">Waveshare ESP32-S3-Touch-AMOLED-1.8</a>
-- <a href="https://github.com/Xinyuan-LilyGO/T-Circle-S3" target="_blank" title="LILYGO T-Circle-S3">LILYGO T-Circle-S3</a>
-- <a href="https://oshwhub.com/tenclass01/xmini_c3" target="_blank" title="XiaGe Mini C3">XiaGe Mini C3</a>
-- <a href="https://oshwhub.com/movecall/cuican-ai-pendant-lights-up-y" target="_blank" title="Movecall CuiCan ESP32S3">CuiCan AI Pendant</a>
-- <a href="https://github.com/WMnologo/xingzhi-ai" target="_blank" title="WMnologo-Xingzhi-1.54">WMnologo-Xingzhi-1.54TFT</a>
-- <a href="https://www.seeedstudio.com/SenseCAP-Watcher-W1-A-p-5979.html" target="_blank" title="SenseCAP Watcher">SenseCAP Watcher</a>
-- <a href="https://www.bilibili.com/video/BV1BHJtz6E2S/" target="_blank" title="ESP-HI Low Cost Robot Dog">ESP-HI Low Cost Robot Dog</a>
+## MicroSD layout
 
-<div style="display: flex; justify-content: space-between;">
-  <a href="docs/v1/lichuang-s3.jpg" target="_blank" title="LiChuang ESP32-S3 Development Board">
-    <img src="docs/v1/lichuang-s3.jpg" width="240" />
-  </a>
-  <a href="docs/v1/espbox3.jpg" target="_blank" title="Espressif ESP32-S3-BOX3">
-    <img src="docs/v1/espbox3.jpg" width="240" />
-  </a>
-  <a href="docs/v1/m5cores3.jpg" target="_blank" title="M5Stack CoreS3">
-    <img src="docs/v1/m5cores3.jpg" width="240" />
-  </a>
-  <a href="docs/v1/atoms3r.jpg" target="_blank" title="AtomS3R + Echo Base">
-    <img src="docs/v1/atoms3r.jpg" width="240" />
-  </a>
-  <a href="docs/v1/magiclick.jpg" target="_blank" title="Magic Button 2.4">
-    <img src="docs/v1/magiclick.jpg" width="240" />
-  </a>
-  <a href="docs/v1/waveshare.jpg" target="_blank" title="Waveshare ESP32-S3-Touch-AMOLED-1.8">
-    <img src="docs/v1/waveshare.jpg" width="240" />
-  </a>
-  <a href="docs/v1/lilygo-t-circle-s3.jpg" target="_blank" title="LILYGO T-Circle-S3">
-    <img src="docs/v1/lilygo-t-circle-s3.jpg" width="240" />
-  </a>
-  <a href="docs/v1/xmini-c3.jpg" target="_blank" title="XiaGe Mini C3">
-    <img src="docs/v1/xmini-c3.jpg" width="240" />
-  </a>
-  <a href="docs/v1/movecall-cuican-esp32s3.jpg" target="_blank" title="CuiCan">
-    <img src="docs/v1/movecall-cuican-esp32s3.jpg" width="240" />
-  </a>
-  <a href="docs/v1/wmnologo_xingzhi_1.54.jpg" target="_blank" title="WMnologo-Xingzhi-1.54">
-    <img src="docs/v1/wmnologo_xingzhi_1.54.jpg" width="240" />
-  </a>
-  <a href="docs/v1/sensecap_watcher.jpg" target="_blank" title="SenseCAP Watcher">
-    <img src="docs/v1/sensecap_watcher.jpg" width="240" />
-  </a>
-  <a href="docs/v1/esp-hi.jpg" target="_blank" title="ESP-HI Low Cost Robot Dog">
-    <img src="docs/v1/esp-hi.jpg" width="240" />
-  </a>
-</div>
+```text
+/sdcard/
+  mp3/                <- the music library (one extra folder level is allowed)
+    caperucita roja.mp3
+    el ratoncito perez.mp3
+  images/             <- photos for the slideshow (JPEG, non-progressive)
+```
 
-## Software
+Titles come from the file name: underscores become spaces and the `.mp3` extension is dropped.
+The index holds up to 500 tracks and one folder level below `/sdcard/mp3`.
 
-### Firmware Flashing
+---
 
-For beginners, it is recommended to use the firmware that can be flashed without setting up a development environment.
+## Cloud audio is refused
 
-The firmware connects to the official [xiaozhi.me](https://xiaozhi.me) server by default. Personal users can register an account to use the Qwen real-time model for free.
+The upstream cloud agent has a music search of its own and pushes whatever it finds as a
+`notify` message carrying a remote URL. `media/media_policy.cc` refuses that audio when a local
+library exists, so the robot never streams music from the cloud:
 
-👉 [Beginner's Firmware Flashing Guide](https://docs.xiaozhi.me/en/firmware/flashing.html)
+- The refusal is logged, so it is visible in the serial log.
+- Cloud audio is still allowed when the device has **no** local library, so a robot without a
+  card is not left mute.
+- Set the NVS key `media` / `allow_remote` to `true` to always allow cloud audio.
 
-### Development Environment
+The assistant side needs one extra step that only the account owner can do: in the
+**xiaozhi.me** console, add a prompt such as
 
-- Cursor or VSCode
-- Install the ESP-IDF plugin. The minimum SDK is [ESP-IDF v6.0.1](https://github.com/espressif/esp-idf/releases/tag/v6.0.1); [ESP-IDF `release/v6.1`](https://github.com/espressif/esp-idf/tree/release/v6.1) is recommended. ESP-IDF 5.x is not supported.
-- Linux is better than Windows for faster compilation and fewer driver issues
-- This project uses Google C++ code style, please ensure compliance when submitting code
+> This device plays music from its own memory card. Always use the `self.media.play` tool to
+> play a song, and never use a music search or a web search to find one.
 
-Use the `release/v6.1` branch rather than the `v6.1` release tag: an ESP32-C3 Wi-Fi initialization failure with that tag is reported in [#2344](https://github.com/78/xiaozhi-esp32/issues/2344). After switching SDK revisions, run `git submodule update --init --recursive` in the ESP-IDF directory, source its `export.sh`, and run `idf.py fullclean` in this project before rebuilding.
+The tool description already says the same thing, but the prompt is what the agent reads first.
 
-### Developer Documentation
+---
 
-- [Custom Board Guide](docs/custom-board.md) - Learn how to create custom boards for XiaoZhi AI
-- [OTA Configuration, Activation, and Firmware Updates](docs/ota.md) - Device bootstrap HTTP API and protocol capability reporting
-- [MCP Protocol IoT Control Usage](docs/mcp-usage.md) - Learn how to control IoT devices via MCP protocol
-- [MCP Protocol Interaction Flow](docs/mcp-protocol.md) - Device-side MCP protocol implementation
-- [MQTT + UDP Hybrid Communication Protocol Document](docs/mqtt-udp.md)
-- [A detailed WebSocket communication protocol document](docs/websocket.md)
+## Build and flash
 
-## Large Model Configuration
+```sh
+# ESP-IDF release/v6.1 (v6.0.1 or later; IDF 5.x is not supported)
+. ~/esp/esp-idf/export.sh
 
-If you already have a XiaoZhi AI chatbot device and have connected to the official server, you can log in to the [xiaozhi.me](https://xiaozhi.me) console for configuration.
+cd xiaozhi-esp32
+python3 scripts/build.py salmis-s3 --name salmis-s3
+```
 
-👉 [Backend Operation Video Tutorial (Old Interface)](https://www.bilibili.com/video/BV1jUCUY2EKM/)
+Flash it **without touching `nvs`**, so the Wi-Fi credentials and the activation survive:
 
-## Related Open Source Projects
+```sh
+cd build
+esptool --chip esp32s3 -p /dev/ttyACM0 -b 460800 write-flash @flash_args
+idf.py -p /dev/ttyACM0 monitor
+```
 
-For server deployment on personal computers, refer to the following open-source projects:
+Do not flash `merged-binary.bin`: it starts at 0x0 and would erase `nvs`.
 
-- [xinnan-tech/xiaozhi-esp32-server](https://github.com/xinnan-tech/xiaozhi-esp32-server) Python server
-- [joey-zhou/xiaozhi-esp32-server-java](https://github.com/joey-zhou/xiaozhi-esp32-server-java) Java server
-- [AnimeAIChat/xiaozhi-server-go](https://github.com/AnimeAIChat/xiaozhi-server-go) Golang server
-- [hackers365/xiaozhi-esp32-server-golang](https://github.com/hackers365/xiaozhi-esp32-server-golang) Golang server
+Host side tests:
 
-Other client projects using the XiaoZhi communication protocol:
+```sh
+python3 -m unittest discover -s scripts/tests -v
+```
 
-- [huangjunsen0406/py-xiaozhi](https://github.com/huangjunsen0406/py-xiaozhi) Python client
-- [TOM88812/xiaozhi-android-client](https://github.com/TOM88812/xiaozhi-android-client) Android client
-- [100askTeam/xiaozhi-linux](http://github.com/100askTeam/xiaozhi-linux) Linux client by 100ask
-- [78/xiaozhi-sf32](https://github.com/78/xiaozhi-sf32) Bluetooth chip firmware by Sichuan
-- [QuecPython/solution-xiaozhiAI](https://github.com/QuecPython/solution-xiaozhiAI) QuecPython firmware by Quectel
+### Secret scanning
 
-Custom Assets Tools:
+`scripts/secret_scan.py` blocks any commit that stages credentials. Only the lines added by the
+commit are examined, so upstream code does not trigger false positives.
 
-- [78/xiaozhi-assets-generator](https://github.com/78/xiaozhi-assets-generator) Custom Assets Generator (Wake words, fonts, emojis, backgrounds)
+```sh
+sh scripts/install_git_hooks.sh      # install the pre-commit hook
+python3 scripts/secret_scan.py --all       # audit every tracked file
+python3 scripts/secret_scan.py --history   # audit the whole history
+```
 
-## About the Project
+It also knows about this project specifically: the robot's MAC address, the factory flash backup
+name and NVS dumps are all treated as secrets.
 
-This is an open-source ESP32 project, released under the MIT license, allowing anyone to use it for free, including for commercial purposes.
+---
 
-We hope this project helps everyone understand AI hardware development and apply rapidly evolving large language models to real hardware devices.
+## What changed against upstream
 
-If you have any ideas or suggestions, please feel free to raise Issues or join our [Discord](https://discord.gg/C759fGMBcZ) or QQ group: 1095994019
+Everything is on the `salmis` branch. `main` tracks upstream and is never edited.
 
-## Star History
+| Path | Change |
+|---|---|
+| `main/media/media_library.{h,cc}` | Index of `/sdcard/mp3`, normalized search, stable ids |
+| `main/media/mp3_file_decoder.{h,cc}` | MP3 → mono → 24 kHz → Opus, streamed in 4 KB chunks |
+| `main/media/media_mcp_tools.{h,cc}` | The `self.media.*` tools |
+| `main/media/media_policy.{h,cc}` | Refuses cloud audio when a local library exists |
+| `main/boards/salmis-s3/` | New board: microSD, expressions, slideshow, emoji generator |
+| `main/application.{h,cc}` | `PlayLocalAudio` / `StopLocalAudio`, notification refusal |
+| `main/notify/notify_player.{h,cc}` | `StartLocalFile`, reusing the notify pipeline |
+| `main/CMakeLists.txt`, `main/Kconfig.projbuild` | Board and media module registration |
+| `scripts/build_default_assets.py` | Board-local emoji collections |
+| `scripts/secret_scan.py`, `scripts/install_git_hooks.sh` | Secret scanning tooling |
 
-<a href="https://star-history.com/#78/xiaozhi-esp32&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=78/xiaozhi-esp32&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=78/xiaozhi-esp32&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=78/xiaozhi-esp32&type=Date" />
- </picture>
-</a>
+The upstream `spotpear/sp-esp32-s3-1.28-box` board, and every other board, are untouched.
+
+---
+
+## Status
+
+Tested on hardware: the card mounts and is listed at boot, the expressions animate, the
+slideshow runs, an MP3 plays from a long BOOT press, a voice request plays a track by name, and
+the wake word stops it.
+
+Not tested yet: heap and CPU while playing, playback longer than 290 s on battery, pause and
+resume, arbitration against a live conversation, and whether the wake word is still detected
+while a long track plays with AEC active.
+
+---
+
+## Credits and license
+
+Based on [78/xiaozhi-esp32](https://github.com/78/xiaozhi-esp32), MIT licensed. The MP3
+playback approach follows
+[Lee-Stone/esp32s3-lvgl-terminal.xiaozhi](https://github.com/Lee-Stone/esp32s3-lvgl-terminal.xiaozhi)
+(MIT), MIT licensed, adapted rather than copied.
+
+The upstream project's own documentation still applies to everything that was not changed here:
+[developer docs](docs/custom-board.md), [MCP usage](docs/mcp-usage.md),
+[notification messages](docs/notify.md) and [audio design](main/audio/README.md).
