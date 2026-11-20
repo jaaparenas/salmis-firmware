@@ -1,6 +1,7 @@
 #include "media_mcp_tools.h"
 
 #include <esp_log.h>
+#include <esp_random.h>
 
 #include <atomic>
 
@@ -12,7 +13,11 @@
 
 namespace {
 
-constexpr size_t kListPageSize = 10;
+// The robot must not read the whole library aloud. Every answer the device
+// returns is bounded to this many titles, so the assistant has a short list
+// it can offer instead of an endless one.
+constexpr size_t kListPageSize = 5;
+constexpr size_t kSampleSize = 5;
 
 std::atomic<int> g_current_id{-1};
 
@@ -58,7 +63,16 @@ ReturnValue Play(const PropertyList& properties) {
 
     auto result = library.Search(properties["query"].value<std::string>());
     if (result.kind == MediaLibrary::MatchKind::kNone) {
-        return StatusJson("not_found");
+        // The song is not in the library. Return a short sample so the
+        // assistant can offer a few real titles instead of dumping the whole
+        // library, and let it ask the user before reading any of them.
+        cJSON* root = StatusJson("not_found");
+        cJSON_AddNumberToObject(root, "total", static_cast<double>(library.Count()));
+        cJSON* sample = cJSON_AddArrayToObject(root, "sample");
+        for (const auto& track : library.Page(0, kSampleSize)) {
+            cJSON_AddItemToArray(sample, TrackJson(track));
+        }
+        return root;
     }
     if (result.kind == MediaLibrary::MatchKind::kUnique) {
         return StartTrack(result.tracks.front());
@@ -69,6 +83,21 @@ ReturnValue Play(const PropertyList& properties) {
         cJSON_AddItemToArray(candidates, TrackJson(track));
     }
     return root;
+}
+
+ReturnValue Random(const PropertyList&) {
+    auto& library = MediaLibrary::GetInstance();
+    size_t count = library.Count();
+    if (count == 0) {
+        return StatusJson("storage_unavailable");
+    }
+    size_t index = esp_random() % count;
+    MediaTrack track;
+    if (!library.Get(static_cast<int>(index), track)) {
+        return StatusJson("not_found");
+    }
+    ESP_LOGI(TAG, "Random pick id=%d title=%s", track.id, track.title.c_str());
+    return StartTrack(track);
 }
 
 ReturnValue List(const PropertyList& properties) {
@@ -112,13 +141,26 @@ void RegisterMediaMcpTools() {
         "in the library, say so instead. Pass the name the user said in `query` (just the "
         "title, without words like 'play'). The result is one of: `playing` (confirm briefly "
         "in one short sentence; playback starts right after you finish speaking), "
-        "`not_found` (tell the user it is not in the library and offer self.media.list), "
+        "`not_found` (the song is not in the library; `sample` holds up to five titles that "
+        "ARE in it. Say in one short sentence that the song is not there, then ask the user "
+        "ONE short question: whether they want to hear a few of those titles, or to have a "
+        "random one played. Do NOT read the titles out until the user says yes, and never "
+        "read more than five), "
         "`ambiguous` (read the candidate titles and ask which one, then call this tool again "
         "with that candidate's `id`), or `storage_unavailable` (the memory card is missing or "
         "empty). Do not call this tool to pause or stop; use self.media.stop.",
         PropertyList({Property("query", kPropertyTypeString, std::string("")),
                       Property("id", kPropertyTypeInteger, -1, -1, 100000)}),
         Play);
+
+    server.AddTool(
+        "self.media.random",
+        "Play a random song from the device's own memory card. Use when the user asks for a "
+        "surprise, says 'pick one at random', or accepts the offer to have a random song "
+        "played after a song was not found in the library. The result is one of: `playing` "
+        "(confirm briefly in one short sentence; playback starts right after you finish "
+        "speaking) or `storage_unavailable` (the memory card is missing or empty).",
+        PropertyList(), Random);
 
     server.AddTool(
         "self.media.stop",
@@ -137,9 +179,11 @@ void RegisterMediaMcpTools() {
 
     server.AddTool(
         "self.media.list",
-        "List the songs stored on the device's memory card, 10 per page, with their ids. Use "
-        "when the user asks what songs or audio are available, or when a search was not found. "
-        "Read at most a few titles aloud and offer the next page instead of reading everything.",
+        "List the songs stored on the device's memory card, 5 per page, with their ids. Use "
+        "only when the user asks what songs or audio are available, or when a search was not "
+        "found AND the user said they want to hear some titles. Read at most ONE page, that "
+        "is at most five titles, and then stop: never read the whole library aloud and never "
+        "go through page after page.",
         PropertyList({Property("page", kPropertyTypeInteger, 0, 0, 1000)}), List);
 
     server.AddUserOnlyTool("self.media.rescan",

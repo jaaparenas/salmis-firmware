@@ -36,13 +36,36 @@ notification would.
 | Tool | Purpose |
 |---|---|
 | `self.media.play` | Play a track by title or id. Returns `playing`, `not_found`, `ambiguous` or `storage_unavailable` |
+| `self.media.random` | Play a random track, for "pick one at random" |
 | `self.media.stop` | Stop the current track |
 | `self.media.status` | Whether something is playing, and which track |
-| `self.media.list` | Browse the library, 10 tracks per page |
+| `self.media.list` | Browse the library, 5 tracks per page |
 | `self.media.rescan` | Re-index the card (user-only tool) |
 
 The assistant only ever passes an **id or a title**. Paths never come from the model: they are
 validated in both `Application` and `NotifyPlayer` (`/sdcard/` prefix, no `..`).
+
+### The robot never reads the whole library aloud
+
+A library can hold hundreds of tracks, and an assistant that starts listing them does not
+stop. Every answer the device returns is therefore bounded:
+
+- `self.media.list` returns **5 titles per page**, never more.
+- A `not_found` result carries a `sample` of **at most 5 titles** that *are* in the library,
+  so the assistant can offer real options without a second call.
+- `ambiguous` returns at most 5 candidates.
+
+The tool descriptions tell the assistant to ask the user first and to read at most five
+titles, so the expected conversation is:
+
+> — *pon la canción de la caperucita*
+> — *No tengo esa canción. ¿Quieres que te diga algunas que sí tengo, o que escoja una al azar?*
+> — *a ver cuáles tienes*
+> — *Tengo Caperucita Roja, El Ratoncito Pérez, …*
+> — *pon el ratoncito*
+> — *Ya está sonando.*
+
+The `xiaozhi.me` prompt reinforces this, see [Cloud audio is refused](#cloud-audio-is-refused).
 
 ### New board: `salmis-s3`
 
@@ -102,7 +125,10 @@ The assistant side needs one extra step that only the account owner can do: in t
 **xiaozhi.me** console, add a prompt such as
 
 > This device plays music from its own memory card. Always use the `self.media.play` tool to
-> play a song, and never use a music search or a web search to find one.
+> play a song, and never use a music search or a web search to find one. When a song is not in
+> the library, say so in one short sentence and ask the user whether they want to hear a few of
+> the titles you do have or to have a random one played. Never read out more than five titles,
+> and never read the whole library.
 
 The tool description already says the same thing, but the prompt is what the agent reads first.
 
