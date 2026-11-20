@@ -105,10 +105,13 @@ void RegisterMediaMcpTools() {
     server.AddTool(
         "self.media.play",
         "Play a song or audio file stored on this device's own memory card. Use this whenever "
-        "the user asks to play, put on, or listen to a song, story, or audio by name, and ALWAYS "
-        "prefer it over any other music or web search. Pass the name the user said in `query` "
-        "(just the title, without words like 'play'). The result is one of: `playing` (confirm "
-        "briefly in one short sentence; playback starts right after you finish speaking), "
+        "the user asks to play, put on, or listen to a song, story, or audio by name. This "
+        "device has no internet music: it never streams songs from the web and this tool is "
+        "the ONLY way to play music or audio on it. ALWAYS use it, and NEVER use a music "
+        "search, a web search, or any other tool to find or play a song; if the song is not "
+        "in the library, say so instead. Pass the name the user said in `query` (just the "
+        "title, without words like 'play'). The result is one of: `playing` (confirm briefly "
+        "in one short sentence; playback starts right after you finish speaking), "
         "`not_found` (tell the user it is not in the library and offer self.media.list), "
         "`ambiguous` (read the candidate titles and ask which one, then call this tool again "
         "with that candidate's `id`), or `storage_unavailable` (the memory card is missing or "

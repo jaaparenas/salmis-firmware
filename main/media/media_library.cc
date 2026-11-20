@@ -109,6 +109,7 @@ void MediaLibrary::ScanDirectory(const std::string& dir, int depth, std::vector<
 }
 
 void MediaLibrary::Rescan() {
+    std::lock_guard<std::mutex> scan_lock(scan_mutex_);
     std::vector<std::string> paths;
     ScanDirectory(kRoot, 0, paths);
     std::sort(paths.begin(), paths.end());
@@ -142,6 +143,16 @@ size_t MediaLibrary::Count() {
     EnsureScanned();
     std::lock_guard<std::mutex> lock(mutex_);
     return tracks_.size();
+}
+
+size_t MediaLibrary::CachedCount() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return scanned_ ? tracks_.size() : 0;
+}
+
+bool MediaLibrary::IsScanned() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return scanned_;
 }
 
 std::vector<MediaTrack> MediaLibrary::Page(size_t page, size_t page_size) {

@@ -417,6 +417,19 @@ private:
         ListSdRoot();
     }
 
+    static void MediaScanTask(void* arg) {
+        // Walk the card in the background so the first cloud notification does
+        // not have to scan it from the network task. It also runs when no card
+        // is mounted: the scan then finds nothing and the device knows it has
+        // no local library.
+        MediaLibrary::GetInstance().Rescan();
+        vTaskDelete(nullptr);
+    }
+
+    void StartMediaScan() {
+        xTaskCreate(MediaScanTask, "salmis_media_scan", 4096, nullptr, 1, nullptr);
+    }
+
     void InitializeButtons() {
         boot_button_.OnClick([this]() {
             auto& app = Application::GetInstance();
@@ -473,6 +486,7 @@ public:
         GetDisplay()->SetHideSubtitle(true);
         InitializeButtons();
         InitializeSdCard();
+        StartMediaScan();
         RegisterMediaMcpTools();
         SlideShow::GetInstance().Start(static_cast<CustomLcdDisplay*>(display_));
         if (GetBacklight()) {

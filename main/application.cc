@@ -6,6 +6,7 @@
 #include "cjson_utils.h"
 #include "display.h"
 #include "mcp_server.h"
+#include "media/media_policy.h"
 #include "mqtt_protocol.h"
 #include "settings.h"
 #include "system_info.h"
@@ -632,6 +633,11 @@ void Application::InitializeProtocol() {
             auto audio_url = cJSON_GetObjectItem(root, "audio_url");
             if (!cJSON_IsString(audio_url) || audio_url->valuestring[0] == '\0') {
                 ESP_LOGW(TAG, "Notify message requires audio_url");
+                return;
+            }
+            // The local library is the only music source on this device, so
+            // audio streamed by the cloud is refused instead of played.
+            if (media::ShouldRefuseCloudAudio(audio_url->valuestring)) {
                 return;
             }
 

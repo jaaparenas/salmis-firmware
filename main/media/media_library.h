@@ -28,6 +28,11 @@ public:
 
     void Rescan();
     size_t Count();
+    // Number of tracks found by the last scan. Never triggers a scan, so it
+    // is safe to call from a latency sensitive path.
+    size_t CachedCount();
+    // True once a scan has completed, even if it found nothing.
+    bool IsScanned();
     std::vector<MediaTrack> Page(size_t page, size_t page_size);
     bool Get(int id, MediaTrack& out);
     SearchResult Search(const std::string& query);
@@ -42,6 +47,8 @@ private:
     void ScanDirectory(const std::string& dir, int depth, std::vector<std::string>& out);
 
     std::mutex mutex_;
+    // Serializes scans so two callers never walk the card at the same time.
+    std::mutex scan_mutex_;
     std::vector<MediaTrack> tracks_;
     bool scanned_ = false;
 };
